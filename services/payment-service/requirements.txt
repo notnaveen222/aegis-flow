@@ -4,3 +4,11 @@ sqlalchemy==2.0.54
 psycopg[binary]==3.3.5
 pyjwt==2.14.0
 pydantic-settings==2.15.0
+
+# SEEDED FLAW #7: dependencies with known CVEs.
+# Expected detector: Trivy SCA via the Syft SBOM.
+#   urllib3 1.26.15 -> CVE-2023-43804 (High, Cookie header leaked on cross-origin redirect)
+#                      CVE-2023-45803, CVE-2024-37891 (Medium)
+#   requests 2.25.1 -> CVE-2023-32681 (Medium, Proxy-Authorization header leak)
+requests==2.25.1
+urllib3==1.26.15

@@ -1,5 +1,5 @@
-# Pinned minor tag: reproducible builds, and Trivy can tell exactly what is inside.
-FROM python:3.12-slim
+# SEEDED FLAW #8: stale base image (Oct 2023). Expected detector: Trivy image scan.
+FROM python:3.12.0-slim
 
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 
@@ -10,10 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 
-# Unprivileged user with a fixed UID (Kubernetes runAsUser will reference it).
-RUN adduser --disabled-password --gecos "" --uid 10001 appuser \
-    && chown -R appuser:appuser /app
-USER appuser
+# SEEDED FLAW #9: no USER instruction, runs as root. Expected detector: Checkov CKV_DOCKER_3.
 
 EXPOSE 8000
 

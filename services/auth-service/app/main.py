@@ -1,8 +1,20 @@
-"""Application entry point."""
+"""Application entry point.
+
+SEEDED FLAW #11: no security headers.
+Expected detector: OWASP ZAP baseline scan (missing X-Content-Type-Options,
+X-Frame-Options, CSP, ...). The middleware that set them has been removed.
+
+Extra targets for custom Semgrep rules (not counted in the 12):
+  - `debug=True` on the FastAPI app  -> rule `fastapi-debug-enabled`
+    Debug mode returns stack traces and local variables to the client.
+  - CORS `allow_origins=["*"]` with credentials -> rule `cors-wildcard-origin`
+    Any website can make authenticated requests to this API from a victim's browser.
+"""
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import settings
@@ -12,29 +24,23 @@ from .routes import router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Create tables on startup. Fine for a demo; production uses migrations (Alembic).
     Base.metadata.create_all(bind=engine)
     yield
 
 
-app = FastAPI(title=settings.service_name, version="1.0.0", lifespan=lifespan)
+app = FastAPI(title=settings.service_name, version="1.0.0", lifespan=lifespan, debug=True)
 
-
-@app.middleware("http")
-async def security_headers(request: Request, call_next):
-    """Baseline hardening headers. Missing these is seeded flaw #11, caught by ZAP."""
-    response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    return response
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health", tags=["ops"])
 def health() -> JSONResponse:
-    """Liveness probe for docker-compose, Kubernetes, and the CI DAST job."""
     return JSONResponse({"status": "ok", "service": settings.service_name})
 
 

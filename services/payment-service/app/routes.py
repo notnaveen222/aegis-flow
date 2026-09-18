@@ -1,21 +1,29 @@
 """HTTP endpoints for payments.
 
-Every query that touches a user's data is filtered by owner_id taken from the
-verified JWT. A user asking for someone else's resource gets 404, not 403:
-we do not even confirm that the resource exists.
+SEEDED FLAW #2:  SQL injection in list_transactions (f-string query).
+                 Expected detector: Semgrep community rule
+                 python.sqlalchemy.security.sqlalchemy-execute-raw-query
+                 + custom rule `raw-sql-string-format`.
+SEEDED FLAW #3:  full card number written to logs in tokenize_card.
+                 Expected detector: custom Semgrep rule `pan-in-logs`.
+SEEDED FLAW #12: IDOR in get_transaction (ownership filter dropped).
+                 Expected detector: tests/test_payment_service.py
+                 ::test_user_cannot_read_another_users_transaction.
+                 No scanner in the pipeline models resource ownership.
 """
 
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from . import schemas
 from .auth import current_user_id
 from .database import get_db
 from .models import CardToken, Transaction
-from .tokenize import luhn_valid, mask, tokenize
+from .notify import send_receipt_webhook
+from .tokenize import luhn_valid, tokenize
 
 log = logging.getLogger("payment")
 router = APIRouter()
@@ -32,8 +40,9 @@ def tokenize_card(
     token, last4 = tokenize(body.card_number)
     db.add(CardToken(token=token, owner_id=user_id, last4=last4))
     db.commit()
-    # Logging the full PAN here is seeded flaw #3. Always log the masked form.
-    log.info("tokenized card %s for user %s", mask(body.card_number), user_id)
+    # FLAW #3: raw PAN in the log line. Logs are shipped to systems that are
+    # not in PCI scope, so this leaks cardholder data outside the boundary.
+    log.info("tokenized card %s for user %s", body.card_number, user_id)
     return schemas.TokenizeResponse(card_token=token, card_last4=last4)
 
 
@@ -43,7 +52,6 @@ def create_payment(
     user_id: int = Depends(current_user_id),
     db: Session = Depends(get_db),
 ) -> Transaction:
-    # A token is only usable by the user who created it.
     card = db.scalar(
         select(CardToken).where(CardToken.token == body.card_token, CardToken.owner_id == user_id)
     )
@@ -61,18 +69,23 @@ def create_payment(
     db.commit()
     db.refresh(tx)
     log.info("payment %s created for user %s: %s %s", tx.id, user_id, tx.amount, tx.currency)
+    send_receipt_webhook(tx.id, str(tx.amount), tx.currency)
     return tx
 
 
 @router.get("/transactions", response_model=list[schemas.TransactionResponse])
 def list_transactions(
+    merchant: str | None = None,
     user_id: int = Depends(current_user_id),
     db: Session = Depends(get_db),
 ) -> list[Transaction]:
-    # Parameterised by the ORM; no string formatting. The vulnerable branch
-    # replaces this with an f-string query (seeded flaw #2).
-    stmt = select(Transaction).where(Transaction.owner_id == user_id).order_by(Transaction.id.desc())
-    return list(db.scalars(stmt))
+    # FLAW #2: user-controlled `merchant` interpolated straight into SQL.
+    # ?merchant=x' OR '1'='1  returns every user's transactions.
+    query = f"SELECT * FROM transactions WHERE owner_id = {user_id}"
+    if merchant:
+        query += f" AND merchant = '{merchant}'"
+    query += " ORDER BY id DESC"
+    return list(db.scalars(select(Transaction).from_statement(text(query))))
 
 
 @router.get("/transactions/{tx_id}", response_model=schemas.TransactionResponse)
@@ -81,9 +94,9 @@ def get_transaction(
     user_id: int = Depends(current_user_id),
     db: Session = Depends(get_db),
 ) -> Transaction:
-    # Ownership check is part of the query itself, so it cannot be forgotten.
-    stmt = select(Transaction).where(Transaction.id == tx_id, Transaction.owner_id == user_id)
-    tx = db.scalar(stmt)
+    # FLAW #12: authenticated, but not authorised. Any logged-in user can read
+    # any transaction by guessing sequential ids.
+    tx = db.get(Transaction, tx_id)
     if tx is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="transaction not found")
     return tx

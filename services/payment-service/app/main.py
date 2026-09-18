@@ -1,9 +1,16 @@
-"""Application entry point."""
+"""Application entry point.
+
+SEEDED FLAW #11: no security headers (middleware removed).
+Expected detector: OWASP ZAP baseline scan.
+
+Extra custom-Semgrep targets: debug=True, CORS wildcard with credentials.
+"""
 
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import settings
@@ -22,19 +29,15 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title=settings.service_name, version="1.0.0", lifespan=lifespan)
+app = FastAPI(title=settings.service_name, version="1.0.0", lifespan=lifespan, debug=True)
 
-
-@app.middleware("http")
-async def security_headers(request: Request, call_next):
-    """Baseline hardening headers. Missing these is seeded flaw #11, caught by ZAP."""
-    response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    return response
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health", tags=["ops"])
