@@ -23,3 +23,6 @@ Thumbs.db
 reports/
 sbom/
 *.sarif
+
+# Private study notes
+docs/interview-notes.md
