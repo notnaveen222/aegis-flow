@@ -1,0 +1,28 @@
+# Gitleaks configuration. Built-in ruleset plus one custom rule and allowlists.
+title = "aegisFlow"
+
+[extend]
+useDefault = true
+
+# Custom rule: Gitleaks has no default rule for passwords inside database URLs.
+[[rules]]
+id = "db-connection-string-password"
+description = "Password embedded in a database connection URL"
+regex = '''(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp)(?:\+\w+)?://[^:\s/@]+:([^@\s]{6,})@'''
+secretGroup = 1
+keywords = ["postgres", "mysql", "mariadb", "mongodb", "redis", "amqp"]
+
+  [[rules.allowlists]]
+  description = "Environment variable placeholders are not secrets"
+  regexes = ['''^\$\{[A-Za-z_][A-Za-z0-9_]*\}$''']
+
+[allowlist]
+description = "Known non-secrets in this repository"
+paths = [
+  '''\.env\.example$''',
+  '''docs/.*\.md$''',
+]
+regexes = [
+  '''4111111111111111''',   # standard Visa test PAN used in tests
+  '''change-me''',          # placeholder value in .env.example
+]
