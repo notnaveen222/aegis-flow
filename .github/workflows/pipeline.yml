@@ -233,3 +233,35 @@ jobs:
             reports/trivy-auth-image.sarif
             reports/trivy-payment-image.sarif
           retention-days: 14
+
+  iac-scan:
+    name: IaC scan (Checkov)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Checkov
+        run: |
+          mkdir -p reports
+          docker run --rm -v "$PWD:/src" -w /src bridgecrew/checkov:latest \
+            -d k8s/ -o sarif --output-file-path reports --quiet \
+          || true
+          mv reports/results_sarif.sarif reports/checkov.sarif
+
+      - name: Upload SARIF to GitHub code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/checkov.sarif
+          category: checkov
+
+      - name: Upload SARIF artifact for policy gate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sarif-checkov
+          path: reports/checkov.sarif
+          retention-days: 14
