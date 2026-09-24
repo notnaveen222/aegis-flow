@@ -282,13 +282,13 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    env:
+      POSTGRES_PASSWORD: ci-postgres-password
+      JWT_SECRET: ci-only-jwt-secret-not-for-prod-use
     steps:
       - uses: actions/checkout@v4
 
       - name: Start the stack
-        env:
-          POSTGRES_PASSWORD: ci-postgres-password
-          JWT_SECRET: ci-only-jwt-secret-not-for-prod-use
         run: docker compose up --build -d
 
       - name: Wait for services to be healthy
@@ -385,7 +385,11 @@ jobs:
     name: Sign images (Cosign) + Kyverno admission demo
     runs-on: ubuntu-latest
     needs: [build-and-push, policy-gate]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: |
+      needs.build-and-push.result == 'success' &&
+      needs.policy-gate.result == 'success' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
