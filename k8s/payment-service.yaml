@@ -15,14 +15,10 @@ spec:
       labels:
         app: payment-service
     spec:
+      # SEEDED FLAW #10: privileged pod, no resource limits.
+      # Expected detector: Checkov CKV_K8S_16 (privileged), CKV_K8S_10/11/12/13
+      # (missing requests/limits).
       automountServiceAccountToken: false
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
-        fsGroup: 10001
-        seccompProfile:
-          type: RuntimeDefault
       containers:
         - name: payment-service
           image: ghcr.io/notnaveen222/aegis-flow-payment-service:latest
@@ -30,10 +26,7 @@ spec:
           ports:
             - containerPort: 8000
           securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
+            privileged: true
           env:
             - name: DATABASE_URL
               valueFrom:
@@ -45,13 +38,6 @@ spec:
                 secretKeyRef:
                   name: aegisflow-secrets
                   key: jwt-secret
-          resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: 500m
-              memory: 256Mi
           livenessProbe:
             httpGet:
               path: /health
