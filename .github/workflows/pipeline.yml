@@ -194,6 +194,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Create reports directory
+        run: mkdir -p reports
+
       - name: Scan auth-service image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -264,4 +267,34 @@ jobs:
         with:
           name: sarif-checkov
           path: reports/checkov.sarif
+          retention-days: 14
+
+  policy-gate:
+    name: Policy gate (OPA/Conftest)
+    runs-on: ubuntu-latest
+    needs: [secrets-scan, sast, sca-sbom, container-scan, iac-scan]
+    if: always()
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all SARIF artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sarif-*
+          path: reports
+          merge-multiple: true
+
+      - name: Evaluate every SARIF file against the gate policy
+        run: |
+          FAILED=0
+          for f in $(find reports -name '*.sarif'); do
+            echo "::group::conftest $f"
+            docker run --rm -v "$PWD:/src" -w /src openpolicyagent/conftest:latest \
+              test --policy policy/gate.rego --data policy/waivers.yml \
+              --parser json "$f" || FAILED=1
+            echo "::endgroup::"
+          done
+          exit $FAILED
           retention-days: 14

@@ -1,0 +1,30 @@
+# Expiring waivers for the OPA/Conftest policy gate.
+#
+# Each entry suppresses exactly one rule_id repo-wide until it expires. An
+# expired waiver becomes a gate failure on its own (see gate.rego), so a
+# waiver can't silently outlive the reason it was written for.
+#
+# rule_id  - the SARIF ruleId to waive (from gitleaks/semgrep/trivy/checkov)
+# reason   - why this is an accepted tradeoff right now
+# expires  - RFC3339 timestamp; renew deliberately, don't just push the date out
+
+waivers:
+  - rule_id: CKV_K8S_35
+    reason: >-
+      Secrets injected as env vars, not mounted files. Accepted for a
+      single-replica portfolio deployment with no secret-store CSI driver
+      wired up; revisit if this ever becomes a real multi-tenant cluster.
+    expires: "2027-03-01T00:00:00Z"
+
+  - rule_id: CKV_K8S_43
+    reason: >-
+      Manifests reference a floating tag, not a digest. There is no CD step
+      that resolves the freshly-built digest and rewrites k8s/*.yaml after
+      build-and-push, so pinning by digest would just go stale.
+    expires: "2027-03-01T00:00:00Z"
+
+  - rule_id: CKV_K8S_14
+    reason: >-
+      Same root cause as CKV_K8S_43: no automated manifest bump after build,
+      so a fixed non-latest tag would drift from what was actually pushed.
+    expires: "2027-03-01T00:00:00Z"
