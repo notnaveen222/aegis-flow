@@ -86,3 +86,150 @@ jobs:
           name: sarif-semgrep
           path: reports/semgrep.sarif
           retention-days: 14
+
+  build-and-push:
+    name: Build & push images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      auth-image: ${{ steps.meta.outputs.auth-image }}
+      payment-image: ${{ steps.meta.outputs.payment-image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image tags
+        id: meta
+        run: |
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "auth-image=ghcr.io/${REPO_LOWER}-auth-service:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "payment-image=ghcr.io/${REPO_LOWER}-payment-service:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push auth-service
+        uses: docker/build-push-action@v6
+        with:
+          context: services/auth-service
+          push: true
+          tags: ${{ steps.meta.outputs.auth-image }}
+
+      - name: Build & push payment-service
+        uses: docker/build-push-action@v6
+        with:
+          context: services/payment-service
+          push: true
+          tags: ${{ steps.meta.outputs.payment-image }}
+
+  sca-sbom:
+    name: SCA + SBOM (Trivy)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate SBOMs (CycloneDX)
+        run: |
+          mkdir -p reports/sbom
+          docker run --rm -v "$PWD:/src" -w /src aquasec/trivy:latest fs \
+            --format cyclonedx --output reports/sbom/auth-service.cdx.json \
+            services/auth-service
+          docker run --rm -v "$PWD:/src" -w /src aquasec/trivy:latest fs \
+            --format cyclonedx --output reports/sbom/payment-service.cdx.json \
+            services/payment-service
+
+      - name: Dependency vulnerability scan (SARIF)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src aquasec/trivy:latest fs \
+            --scanners vuln --format sarif --output reports/trivy-sca.sarif \
+            services/ \
+          || true
+
+      - name: Upload SARIF to GitHub code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/trivy-sca.sarif
+          category: trivy-sca
+
+      - name: Upload SARIF artifact for policy gate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sarif-trivy-sca
+          path: reports/trivy-sca.sarif
+          retention-days: 14
+
+      - name: Upload SBOM artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: reports/sbom/
+          retention-days: 14
+
+  container-scan:
+    name: Container image scan (Trivy)
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    permissions:
+      contents: read
+      security-events: write
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan auth-service image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ needs.build-and-push.outputs.auth-image }}
+          format: sarif
+          output: reports/trivy-auth-image.sarif
+          exit-code: "0"
+
+      - name: Scan payment-service image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ needs.build-and-push.outputs.payment-image }}
+          format: sarif
+          output: reports/trivy-payment-image.sarif
+          exit-code: "0"
+
+      - name: Upload auth-service SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/trivy-auth-image.sarif
+          category: trivy-image-auth-service
+
+      - name: Upload payment-service SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/trivy-payment-image.sarif
+          category: trivy-image-payment-service
+
+      - name: Upload SARIF artifacts for policy gate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sarif-trivy-image
+          path: |
+            reports/trivy-auth-image.sarif
+            reports/trivy-payment-image.sarif
+          retention-days: 14
