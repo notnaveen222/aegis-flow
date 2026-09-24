@@ -28,3 +28,13 @@ waivers:
       Same root cause as CKV_K8S_43: no automated manifest bump after build,
       so a fixed non-latest tag would drift from what was actually pushed.
     expires: "2027-03-01T00:00:00Z"
+
+  - rule_id: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+    reason: >-
+      Community Semgrep rule flags routes.py's tokenize_card log line on
+      keyword match alone ("card" appears in the format string). The actual
+      argument logged is mask(body.card_number), not the raw PAN — verified
+      by reading the call site. This is exactly the flaw pan-in-logs (our
+      custom rule) is built to catch for real; this community rule is a
+      false positive on the masked, safe form.
+    expires: "2027-03-01T00:00:00Z"

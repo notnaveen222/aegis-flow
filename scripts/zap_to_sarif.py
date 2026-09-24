@@ -11,8 +11,19 @@ Mapped to SARIF levels: High -> error, Medium -> warning, else -> note.
 
 import json
 import sys
+from urllib.parse import urlparse
 
 RISK_TO_LEVEL = {"3": "error", "2": "warning"}
+
+
+def as_relative_path(uri: str) -> str:
+    """GitHub code scanning rejects http(s):// artifactLocation URIs when the
+    checkout scheme is "file" (SARIF URI scheme mismatch). DAST has no source
+    file to point at, so turn the target URL into a synthetic relative path
+    instead of a real absolute URI."""
+    parsed = urlparse(uri)
+    path = parsed.path.lstrip("/") or "index"
+    return f"dast-targets/{parsed.netloc}/{path}"
 
 
 def convert(zap_report: dict) -> dict:
@@ -45,7 +56,9 @@ def convert(zap_report: dict) -> dict:
                             {
                                 "physicalLocation": {
                                     "artifactLocation": {
-                                        "uri": instance.get("uri", site.get("@name", "")),
+                                        "uri": as_relative_path(
+                                            instance.get("uri", site.get("@name", ""))
+                                        ),
                                     }
                                 }
                             }
