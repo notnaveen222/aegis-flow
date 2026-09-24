@@ -305,11 +305,14 @@ jobs:
           exit 1
 
       - name: Run integration tests
+        id: pytest
+        continue-on-error: true
         run: |
           pip install -r tests/requirements.txt
           pytest -v
 
       - name: Run ZAP baseline scans
+        if: always()
         run: |
           mkdir -p reports
           chmod 777 reports # the zap container writes as its own internal uid
@@ -347,6 +350,12 @@ jobs:
             reports/zap-auth.sarif
             reports/zap-payment.sarif
           retention-days: 14
+
+      - name: Fail the job if integration tests failed
+        if: always() && steps.pytest.outcome == 'failure'
+        run: |
+          echo "::error::Integration tests failed (see 'Run integration tests' above) — this is how IDOR and similar business-logic flaws get caught, since no scanner in this pipeline models resource ownership."
+          exit 1
 
       - name: Tear down the stack
         if: always()
