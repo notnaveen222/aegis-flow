@@ -1,0 +1,88 @@
+name: aegisFlow Security Pipeline
+
+# Every scan stage reports findings as SARIF and does NOT fail the job on its
+# own. The policy-gate job is the single place that decides pass/fail, by
+# evaluating every SARIF file plus the waiver list through OPA/Conftest. This
+# is what "gated by OPA/Rego policies with expiring waivers" means in
+# practice: scanners report, one policy decides.
+
+on:
+  push:
+    branches: [main, vulnerable]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets-scan:
+    name: Secret scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history: Gitleaks scans every past commit too
+
+      - name: Run Gitleaks
+        run: |
+          mkdir -p reports
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.1 \
+            detect --source=/repo --config=/repo/.gitleaks.toml \
+            --report-format=sarif --report-path=/repo/reports/gitleaks.sarif \
+            --redact --exit-code=0
+
+      - name: Upload SARIF to GitHub code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/gitleaks.sarif
+          category: gitleaks
+
+      - name: Upload SARIF artifact for policy gate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sarif-gitleaks
+          path: reports/gitleaks.sarif
+          retention-days: 14
+
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: |
+          mkdir -p reports
+          docker run --rm -v "$PWD:/src" -w /src semgrep/semgrep \
+            semgrep scan \
+            --config .semgrep/rules.yml \
+            --config p/python \
+            --config p/security-audit \
+            --sarif --output reports/semgrep.sarif \
+            services/ \
+          || true
+
+      - name: Upload SARIF to GitHub code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/semgrep.sarif
+          category: semgrep
+
+      - name: Upload SARIF artifact for policy gate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sarif-semgrep
+          path: reports/semgrep.sarif
+          retention-days: 14
